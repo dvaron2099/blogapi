@@ -1,130 +1,58 @@
-require "rails_helper"
+class PostsController < ApplicationController
+  include Secured
+  before_action :authenticate_user!, only: [:create, :update]
 
-RSpec.describe "Posts", type: :request do
+  rescue_from Exception do |e|
+    render json: {error: e.message}, status: :internal_error
+  end
 
-  describe "GET /posts" do
-    it "should return OK" do
-      get '/posts'
-      payload = JSON.parse(response.body)
-      expect(payload).to be_empty
-      expect(response).to have_http_status(200)
+  rescue_from ActiveRecord::RecordNotFound do |e|
+    render json: {error: e.message}, status: :not_found
+  end
+
+  rescue_from ActiveRecord::RecordInvalid do |e|
+    render json: {error: e.message}, status: :unprocessable_entity
+  end
+
+  # GET /posts
+  def index
+    @posts = Post.where(published: true)
+    if !params[:search].nil? && params[:search].present?
+      @posts = PostsSearchService.search(@posts, params[:search])
     end
+    render json: @posts.includes(:user), status: :ok
+  end
 
-    describe "Search" do
-      let!(:hola_mundo) { create(:published_post, title: 'Hola Mundo') }
-      let!(:hola_rails) { create(:published_post, title: 'Hola Rails') }
-      let!(:curso_rails) { create(:published_post, title: 'Curso Rails') }
-
-      it "should filter posts by title" do
-        get "/posts?search=Hola"
-        payload = JSON.parse(response.body)
-        expect(payload).to_not be_empty
-        expect(payload.size).to eq(2)
-        expect(payload.map { |p| p["id"] }.sort).to eq([hola_mundo.id, hola_rails.id].sort)
-        expect(response).to have_http_status(200)
-      end
+  # GET /posts/{id}
+  def show
+    @post = Post.find(params[:id])
+    if(@post.published? || (Current.user && @post.user_id == Curen.user.id))
+      render json: @post, status: :ok
+    else
+      render json: {error: 'Not Found'}, status: :not_found
     end
   end
 
-  describe "with data in the DB" do
-    let!(:posts) { create_list(:post, 10, published: true) }
-
-    it "should return all the published posts" do
-      get '/posts'
-      payload = JSON.parse(response.body)
-      expect(payload.size).to eq(posts.size)
-      expect(response).to have_http_status(200)
-    end
+  # POST /posts
+  def create
+    @post = Current.user.posts.create!(create_params)
+    render json: @post, status: :created
   end
 
-  describe "GET /post/{id}" do
-    let!(:post) { create(:post) }
-
-    it "should return a post" do
-      get "/posts/#{post.id}"
-      payload = JSON.parse(response.body)
-      expect(payload).to_not be_empty
-      expect(payload["id"]).to eq(post.id)
-      expect(payload["title"]).to eq(post.title)
-      expect(payload["content"]).to eq(post.content)
-      expect(payload["published"]).to eq(post.published)
-      expect(payload["author"]["name"]).to eq(post.user.name)
-      expect(payload["author"]["email"]).to eq(post.user.email)
-      expect(payload["author"]["id"]).to eq(post.user.id)
-      expect(response).to have_http_status(200)
-    end
+  # PUT /posts/{id}
+  def update
+    @post = Current.user.posts.find(params[:id])
+    @post.update!(update_params)
+    render json: @post, status: :ok
   end
 
-  describe "POST /posts" do
-    let!(:user) { create(:user) }
+  private
 
-    it "should create a post" do
-      req_payload = {
-        post: {
-          title: "titulo",
-          content: "content",
-          published: false,
-          user_id: user.id
-        }
-      }
-      # POST HTTP
-      post "/posts", params: req_payload
-      payload = JSON.parse(response.body)
-      expect(payload).to_not be_empty
-      expect(payload["id"]).to_not be_nil
-      expect(response).to have_http_status(:created)
-    end
-
-    it "should return error message on invalid post" do
-      req_payload = {
-        post: {
-          content: "content",
-          published: false,
-          user_id: user.id
-        }
-      }
-      # POST HTTP
-      post "/posts", params: req_payload
-      payload = JSON.parse(response.body)
-      expect(payload).to_not be_empty
-      expect(payload["error"]).to_not be_empty
-      expect(response).to have_http_status(:unprocessable_entity)
-    end
+  def create_params
+    params.require(:post).permit(:title, :content, :published)
   end
 
-  describe "PUT /posts/{id}" do
-    let!(:article) { create(:post) }
-
-    it "should create a post" do
-      req_payload = {
-        post: {
-          title: "titulo",
-          content: "content",
-          published: true
-        }
-      }
-      # PUT HTTP
-      put "/posts/#{article.id}", params: req_payload
-      payload = JSON.parse(response.body)
-      expect(payload).to_not be_empty
-      expect(payload["id"]).to eq(article.id)
-      expect(response).to have_http_status(:ok)
-    end
-
-    it "should return error message on invalid post" do
-      req_payload = {
-        post: {
-          title: nil,
-          content: nil,
-          published: false,
-        }
-      }
-      # PUT HTTP
-      put "/posts/#{article.id}", params: req_payload
-      payload = JSON.parse(response.body)
-      expect(payload).to_not be_empty
-      expect(payload["error"]).to_not be_empty
-      expect(response).to have_http_status(:unprocessable_entity)
-    end
+  def update_params
+    params.require(:post).permit(:title, :content, :published)
   end
 end
